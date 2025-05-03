@@ -1,3 +1,17 @@
+# Notes
+
+experiment.py for room 0 experiments
+
+experimentOffice3.py for office 3 experiments
+
+experimentOffice4.py for office 4 epxeriments
+
+Use all respective .npy and .pth files for the Robot class, included within the code and the repo.
+
+
+
+
+
 # <p align="center">Enforcing safety for vision-based controllers via Control Barrier Functions and Neural Radiance Fields</p>
 
 
