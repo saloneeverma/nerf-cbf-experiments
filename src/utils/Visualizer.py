@@ -50,7 +50,7 @@ class Visualizer(object):
                 else:
                     c2w = c2w_or_camera_tensor
 
-                depth, uncertainty, color, _ = self.renderer.render_img(
+                depth, uncertainty, color = self.renderer.render_img(
                     c,
                     decoders,
                     c2w,

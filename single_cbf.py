@@ -23,7 +23,7 @@ from matplotlib.animation import FFMpegWriter
 with open('device.txt', encoding='utf-8') as file:
      device=file.read()
 
-time_step = 0.1
+time_step = 0.05
 mu = 0
 alpha = 0.5
 d = 0.1
@@ -48,8 +48,8 @@ def update_dynamics(state, action):
 
 class Robot:
     def __init__(self, cfg):
-        self.c = np.load('replica_room1.npy',allow_pickle=True).item()
-        self.decoders = torch.load('replica_room1.pth')
+        self.c = np.load('room0.npy',allow_pickle=True).item()
+        self.decoders = torch.load('room0.pth')
         self.renderer = NICE_SLAM(cfg, args).renderer
         self.renderer.H = 68
         self.renderer.W = 120
@@ -114,7 +114,9 @@ def find_safe_action(robot, pose, h, intended_action, direction):
     new_state = update_dynamics(state, orient_action).unsqueeze(0)
     new_pose = state_to_pose(new_state)
     new_h = d - robot.predict_observation(new_pose).min().unsqueeze(0)
+    print("Got h!")
     best_action = torch.zeros(6).to(device)
+    print("Got best action.")
     if new_h <= alpha * h:
         print('Intended action {} is safe'.format(orient_action))
         print('intervention = 0')
@@ -145,7 +147,7 @@ def find_safe_action(robot, pose, h, intended_action, direction):
             print('Intended action {} is unsafe, a recommended substitute is {}'.format(orient_action, best_action))
             print('intervention =', float(torch.norm(orient_action - best_action, p=2)))
             return best_action, new_h, False
-    #print('Fail to find a safe action')
+    print('Fail to find a safe action')
     #return best_action, h, False
 
 
@@ -197,9 +199,19 @@ if __name__ == '__main__':
     fps = 10
     fourcc = cv2.VideoWriter_fourcc(*'MJPG')
     videoWriter = cv2.VideoWriter('video.avi',fourcc,fps,(240,68))
+    timesFailed = 0
     
-    
-    pose = state_to_pose(torch.tensor([-2, 0.2,  0.5, 90, 0, 115]).unsqueeze(0).to(device)).squeeze()
+    goal_x = 2.423577666	
+    goal_y = 2.383023158
+    goal_z = -1.3
+    start_x = 0.48425902
+    start_y = 0.280662898	
+    start_z = -1.3
+
+    goal_position = torch.tensor([goal_x,goal_y,goal_z]).to(device)  
+    goal_threshold = 0.2  
+
+    pose = state_to_pose(torch.tensor([start_x, start_y,  start_z, 90, 0, 115]).unsqueeze(0).to(device)).squeeze()
     depth, color = robot.render(pose.to(device))
     h = d - depth.min()
     color = cv2.rectangle(color.to(device).detach().cpu().numpy(), (1100, 100), (1150, 580), (0, 0, 0), 10)
@@ -270,13 +282,16 @@ if __name__ == '__main__':
     
     stop_next = -1
     frame = 0
-    while frame < 150:
+    trajectory = []
+    while frame < 250:
         direction = 0
         if direction == 0 : #up
             frame += 1
             print(frame)
             intended_action = -intend
             action, h, is_safe = find_safe_action(robot, pose, d - depth.min(), intended_action, 'up')
+            if not is_safe:
+                timesFailed = timesFailed + 1
             state = torch.cat((pose[:3, -1].to(device), torch.from_numpy(R.from_matrix(pose[:3, :3].cpu()).as_euler('xyz', degrees=True)).to(device)), dim=0).to(device)
             state = update_dynamics(state, action)
             pose = state_to_pose(state.unsqueeze(0)).squeeze()
@@ -300,6 +315,8 @@ if __name__ == '__main__':
             print(frame)
             stop_next = -1
             action, h, is_safe = find_safe_action(robot, pose, d - depth.min(), intend, 'down')
+            if not is_safe:
+                timesFailed = timesFailed + 1
             state = torch.cat((pose[:3, -1].to(device), torch.from_numpy(R.from_matrix(pose[:3, :3].cpu()).as_euler('xyz', degrees=True)).to(device)), dim=0).to(device)
             state = update_dynamics(state, action)
             pose = state_to_pose(state.unsqueeze(0)).squeeze()
@@ -318,6 +335,8 @@ if __name__ == '__main__':
             print(frame)
             stop_next = -1
             action, h, is_safe = find_safe_action(robot, pose, d - depth.min(), intend, 'left')
+            if not is_safe:
+                timesFailed = timesFailed + 1
             state = torch.cat((pose[:3, -1].to(device), torch.from_numpy(R.from_matrix(pose[:3, :3].cpu()).as_euler('xyz', degrees=True)).to(device)), dim=0).to(device)
             state = update_dynamics(state, action)
             pose = state_to_pose(state.unsqueeze(0)).squeeze()
@@ -336,6 +355,8 @@ if __name__ == '__main__':
             print(frame)
             stop_next = -1
             action, h, is_safe = find_safe_action(robot, pose, d - depth.min(), -intend, 'right')
+            if not is_safe:
+                timesFailed = timesFailed + 1
             state = torch.cat((pose[:3, -1].to(device), torch.from_numpy(R.from_matrix(pose[:3, :3].cpu()).as_euler('xyz', degrees=True)).to(device)), dim=0).to(device)
             state = update_dynamics(state, action)
             pose = state_to_pose(state.unsqueeze(0)).squeeze()
@@ -349,6 +370,17 @@ if __name__ == '__main__':
             videoWriter.write(np.hstack([cv2.normalize(depth.unsqueeze(-1).repeat(1,1,3).to(device).detach().cpu().numpy(), dst=None, 
             alpha=0, beta=255, norm_type=cv2.NORM_MINMAX).astype(np.uint8), (color[:, :, [2,1,0]]*255).astype(np.uint8).clip(0,255)]))
             print('min_depth = {}'.format(depth.min()))
+        
+        current_position = pose[:3, -1]  # Extract the (x, y, z) from the pose matrix
+        trajectory.append(current_position)
+        distance_to_goal = torch.norm(current_position - goal_position)
 
+        if distance_to_goal < goal_threshold:
+            print(f"Goal reached at frame {i}: position = {current_position.cpu().numpy()}")
+            break
+            
+    traj_array = np.asarray([t.cpu().numpy() for t in trajectory])
+    np.savetxt("/home/nqd2xs/nerf_cbf_controller/trajectory.txt", traj_array, delimiter=",")
+    print(timesFailed)
     videoWriter.release()
      
